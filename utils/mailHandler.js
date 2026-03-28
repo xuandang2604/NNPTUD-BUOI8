@@ -1,19 +1,63 @@
 const nodemailer = require("nodemailer");
 require("dotenv").config();
 
-const transporter = nodemailer.createTransport({
-  host: "send.api.mailtrap.io",
-  port: 587,
-  secure: false, // Use true for port 465, false for port 587
-  auth: {
-    user: "api",
-    pass: process.env.MAILTRAP_API_KEY,
-  },
-});
+const smtpHost = process.env.MAILTRAP_HOST || "sandbox.smtp.mailtrap.io";
+const smtpUser = process.env.MAILTRAP_SMTP_USER || "";
+const smtpPass = process.env.MAILTRAP_SMTP_PASS || "";
+
+function createTransporter(port, secure) {
+  return nodemailer.createTransport({
+    host: smtpHost,
+    port,
+    secure,
+    family: 4,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  });
+}
+
+async function sendWithFallback(mailOptions) {
+  const primaryPort = Number(process.env.MAILTRAP_PORT || 2525);
+  const candidates = [
+    { port: primaryPort, secure: primaryPort === 465 },
+    { port: 2525, secure: false },
+    { port: 587, secure: false },
+    { port: 465, secure: true },
+  ];
+
+  const deduped = [];
+  const seen = new Set();
+  for (const item of candidates) {
+    const key = `${item.port}-${item.secure}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(item);
+    }
+  }
+
+  const errors = [];
+  for (const candidate of deduped) {
+    try {
+      const transporter = createTransporter(candidate.port, candidate.secure);
+      return await transporter.sendMail(mailOptions);
+    } catch (error) {
+      errors.push(`port ${candidate.port}: ${error.message}`);
+    }
+  }
+
+  throw new Error(
+    `khong the ket noi Mailtrap SMTP. Chi tiet: ${errors.join(" | ")}`,
+  );
+}
 
 module.exports = {
   sendMail: async (to, url) => {
-    const info = await transporter.sendMail({
+    const info = await sendWithFallback({
       from: process.env.MAIL_FROM || "admin@haha.com",
       to: to,
       subject: "RESET PASSWORD REQUEST",
@@ -72,7 +116,7 @@ module.exports = {
 </body>
 </html>`;
 
-    const info = await transporter.sendMail({
+    const info = await sendWithFallback({
       from: process.env.MAIL_FROM || "admin@haha.com",
       to: to,
       subject: "THONG TIN TAI KHOAN",
